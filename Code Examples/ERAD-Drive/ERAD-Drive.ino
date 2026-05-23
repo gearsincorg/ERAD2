@@ -7,6 +7,9 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
+#define MAX_SPEED   20
+#define FAILSAFE_MS 1000
+
 // Define the BLDC motor pins
 // If you're using the same ERAD2 PCB these don't need to change.
 #define BLDC_PWM_UH_GPIO 7
@@ -29,8 +32,11 @@
 
 #define POLE_PAIRS 15 // CHANGE THIS: Number of permanent magnets in motor divided by 2
 
-unsigned long previousMillis = 0;
-bool blinkState = true;
+unsigned long  previousMillis  = 0;
+bool           blinkState      = true;
+uint32_t       lastTime        = 0;
+bool           enabled         = false;
+float          target_velocity = 0;
 
 typedef struct struct_message {
   float command;
@@ -41,9 +47,13 @@ struct_message incomingData;
 
 // Callback function that runs when data is received for ESP-NOW wireless
 void onDataRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
+ lastTime = millis();
+
   memcpy(&incomingData, data, sizeof(incomingData));  // Copy the received data into the struct
-  Serial.print("Receivede: ");
-  Serial.println(incomingData.command);  // Print the received potentiometer value
+  target_velocity =  incomingData.command * MAX_SPEED;
+
+  //Serial.print("Received: ");
+  //Serial.println(incomingData.command);  // Print the received potentiometer value
 }
 
 // BLDC motor & driver instance
@@ -59,8 +69,6 @@ void doA(){sensor.handleA();}
 void doB(){sensor.handleB();}
 void doC(){sensor.handleC();}
 
-// Angle set point variable
-float target_velocity = 0; // Default speed
 
 // Instantiate the commander
 Commander command = Commander(Serial);
@@ -70,10 +78,10 @@ void setup()
 {
   // Use monitoring with serial
   Serial.begin(115200);
-  delay(1000);
+  // delay(1000);
 
   // Comment out if not needed
-  motor.useMonitoring(Serial);
+  // motor.useMonitoring(Serial);
 
   // Set device as a Wi-Fi station
   WiFi.mode(WIFI_STA);
@@ -133,7 +141,7 @@ void setup()
   motor.PID_velocity.P = 0.3f;
   motor.PID_velocity.I = 1.0f;
   motor.PID_velocity.D = 0.0f;
-
+  
   // Default voltage_power_supply
      // motor.voltage_limit = 3; // START SMALL THEN INCREASE IF NEEDED. 3 is what I used in my demos. SHOULD BE SMALL!
 
@@ -162,41 +170,50 @@ void setup()
 
   //Serial.println(F("Motor ready."));
   //Serial.println(F("Set the target angle using serial terminal:"));
-  delay(1000);
+  // delay(1000);
 }
 
 void loop() {
   unsigned long currentMillis = millis();
+
+  // check for loss of signal.
+  if ((millis() - lastTime) > FAILSAFE_MS){
+    target_velocity = 0;
+  }
+  
+  // Disable motor when target_velocity == 0;
+  if (enabled) {
+    if (target_velocity == 0) {
+      motor.disable();
+      enabled = false;
+    }
+  } else {
+    if (target_velocity != 0) {
+      motor.enable();
+      enabled = true;
+    }
+  }
+
   if (currentMillis - previousMillis >= 250) // Every 250ms
   {
     digitalWrite(BLINK_PIN, blinkState); // Toggle LED
     blinkState = !blinkState;
-
-    // target_velocity = round((incomingData.potValue / 10.0) / 20.0) * 20.0; // Incoming data rounded to the nearest 20 as example
-    //Serial.println(target_angle);
-
-    target_velocity = 5;
     previousMillis = currentMillis;
+
+    Serial.print(enabled ? "ENA " : "DIS ");
+    Serial.print(target_velocity);
+    Serial.print(" ");
+    Serial.println(sensor.getVelocity());
   }
 
   // Main FOC algorithm function
   // The faster you run this function the better
   motor.loopFOC();
-
-  // Motion control function
-  // Velocity, position or voltage (defined in motor.controller)
-  // this function can be run at much lower frequency than loopFOC() function
-  // You can also use motor.move() and set the motor.target in the code
-     // if (motor.controller == MotionControlType::angle) { 
-     //     float c = _PI_3/motor.pole_pairs;
-     //     target_angle = floor(target_angle / c + 0.5f) * c;
-     //   }
-  
   motor.move(target_velocity);
  
   // Function intended to be used with serial plotter to monitor motor variables
   // significantly slowing the execution down!!!! Comment out if not needed.
-  motor.monitor();
+  // motor.monitor();
 
   // User communication
   command.run();

@@ -8,16 +8,17 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
-#define lateral 34
-#define axial   35
+#define axialPin   35
+#define yawPin     34
 #define CAL_SAMPLES 64
 
 
 // REPLACE WITH YOUR ESP RECEIVER'S MAC ADDRESS
-uint8_t broadcastAddress1[] = {0x88, 0x57, 0x21, 0xA0, 0x07, 0x98};
+// uint8_t broadcastAddress1[] = {0x88, 0x57, 0x21, 0xA0, 0x07, 0x98};  // MakerBase
+uint8_t broadcastAddress1[] = {0x10, 0x51, 0xDB, 0x57, 0x46, 0x58};  // RoboticWorx
 
 typedef struct struct_message {
-  float command;
+  float cmd;
 } struct_message;
 
 
@@ -27,7 +28,7 @@ struct_message bl_drive;
 struct_message br_drive;
 
 int ax_offset = 0;
-int lat_offset = 0;
+int yaw_offset = 0;
 
 esp_now_peer_info_t peerInfo;
 
@@ -45,15 +46,15 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 
 void  calibrateJS(){
   long int ax_sum  = 0;
-  long int lat_sum = 0;
+  long int yaw_sum = 0;
 
   for (int i = 0; i < CAL_SAMPLES; i++){
-    ax_sum  += analogRead(axial);
-    lat_sum += analogRead(lateral);
+    ax_sum  += analogRead(axialPin);
+    yaw_sum += analogRead(yawPin);
   }
 
   ax_offset  = (int)(ax_sum  / CAL_SAMPLES);
-  lat_offset = (int)(lat_sum / CAL_SAMPLES);
+  yaw_offset = (int)(yaw_sum / CAL_SAMPLES);
 } 
 
 void setup() {
@@ -93,15 +94,16 @@ float deadband(float js){
 
 void loop() {
 
-fl_drive.msg ;
+  float ax  = (float)(constrain(analogRead(axialPin) - ax_offset, -2000, 2000))  / 2000;
+  float yaw = (float)(constrain(analogRead(yawPin) - yaw_offset, -2000, 2000)) / 2000;
 
-  float ax  = (float)(constrain(analogRead(axial) - ax_offset, -2000, 2000))  / 2000;
-  float lat = (float)(constrain(analogRead(lateral) - lat_offset, -2000, 2000)) / 2000;
+  ax = deadband(ax);
+  yaw = deadband(yaw);
+  
+  fl_drive.cmd = ax - yaw ;
+  fr_drive.cmd = ax + yaw ;
 
-  fl_drive.cmd = deadband(ax);
-  //lat = deadband(lat);
-
-  esp_err_t result = esp_now_send(0, (uint8_t *) &testfl_drive, sizeof(struct_message));
+  esp_err_t result = esp_now_send(0, (uint8_t *) &fl_drive, sizeof(struct_message));
 
   delay(50);
 }
