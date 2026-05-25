@@ -14,11 +14,11 @@
 
 
 // REPLACE WITH YOUR ESP RECEIVER'S MAC ADDRESS
-// uint8_t broadcastAddress1[] = {0x88, 0x57, 0x21, 0xA0, 0x07, 0x98};  // MakerBase
-uint8_t broadcastAddress1[] = {0x10, 0x51, 0xDB, 0x57, 0x46, 0x58};  // RoboticWorx
+uint8_t fl_mac[] = {0x10, 0x51, 0xDB, 0x57, 0x46, 0x58};  // RoboticWorx
+uint8_t fr_mac[] = {0x88, 0x57, 0x21, 0xA0, 0x07, 0x98};  // MakerBase
 
 typedef struct struct_message {
-  float cmd;
+  float v_mps;
 } struct_message;
 
 
@@ -73,7 +73,13 @@ void setup() {
   peerInfo.encrypt = false;
 
   // register peers   
-  memcpy(peerInfo.peer_addr, broadcastAddress1, 6);
+  memcpy(peerInfo.peer_addr, fl_mac, 6);
+  if (esp_now_add_peer(&peerInfo) != ESP_OK){
+    Serial.println("Failed to add peer");
+    return;
+  }
+
+  memcpy(peerInfo.peer_addr, fr_mac, 6);
   if (esp_now_add_peer(&peerInfo) != ESP_OK){
     Serial.println("Failed to add peer");
     return;
@@ -94,16 +100,17 @@ float deadband(float js){
 
 void loop() {
 
-  float ax  = (float)(constrain(analogRead(axialPin) - ax_offset, -2000, 2000))  / 2000;
-  float yaw = (float)(constrain(analogRead(yawPin) - yaw_offset, -2000, 2000)) / 2000;
+  float ax  = (float)(constrain(analogRead(axialPin) - ax_offset, -2000, 2000))  / 1000;
+  float yaw = (float)(constrain(analogRead(yawPin) - yaw_offset, -2000, 2000)) / 1000;
 
   ax = deadband(ax);
   yaw = deadband(yaw);
   
-  fl_drive.cmd = ax - yaw ;
-  fr_drive.cmd = ax + yaw ;
+  fl_drive.v_mps = ax + yaw ;
+  fr_drive.v_mps = -(ax - yaw) ;
 
-  esp_err_t result = esp_now_send(0, (uint8_t *) &fl_drive, sizeof(struct_message));
+  esp_now_send(fl_mac, (uint8_t *) &fl_drive, sizeof(struct_message));
+  esp_now_send(fr_mac, (uint8_t *) &fl_drive, sizeof(struct_message));
 
   delay(50);
 }

@@ -7,7 +7,9 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
-#define MAX_SPEED   20
+#define MAX_SPEED_MPS  2.0
+#define RADIUS_M       0.0837
+#define MPS_to_RPS    11.967
 #define FAILSAFE_MS 1000
 
 // Define the BLDC motor pins
@@ -36,10 +38,10 @@ unsigned long  previousMillis  = 0;
 bool           blinkState      = true;
 uint32_t       lastTime        = 0;
 bool           enabled         = false;
-float          target_velocity = 0;
+float          target_rps      = 0;
 
 typedef struct struct_message {
-  float command;
+  float v_mps;
 } struct_message;
 
 // Create a struct_message to hold the incoming data
@@ -47,13 +49,18 @@ struct_message incomingData;
 
 // Callback function that runs when data is received for ESP-NOW wireless
 void onDataRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
- lastTime = millis();
-
   memcpy(&incomingData, data, sizeof(incomingData));  // Copy the received data into the struct
-  target_velocity =  incomingData.command * MAX_SPEED;
 
-  //Serial.print("Received: ");
-  //Serial.println(incomingData.command);  // Print the received potentiometer value
+  float speed_mps = incomingData.v_mps ;
+  if (speed_mps > MAX_SPEED_MPS) {
+    speed_mps = MAX_SPEED_MPS;
+  } else if (speed_mps < -MAX_SPEED_MPS) {
+    speed_mps = -MAX_SPEED_MPS;
+  }
+
+  // convert Meters/Sec to Radians/Sec
+  target_rps = speed_mps * MPS_to_RPS;
+  lastTime = millis();
 }
 
 // BLDC motor & driver instance
@@ -72,13 +79,12 @@ void doC(){sensor.handleC();}
 
 // Instantiate the commander
 Commander command = Commander(Serial);
-void doTarget(char* cmd) { command.scalar(&target_velocity, cmd); }
+void doTarget(char* cmd) { command.scalar(&target_rps, cmd); }
 
 void setup() 
 {
   // Use monitoring with serial
   Serial.begin(115200);
-  // delay(1000);
 
   // Comment out if not needed
   // motor.useMonitoring(Serial);
@@ -154,19 +160,13 @@ void setup()
   motor.sensor_direction = Direction::CW; 
   motor.zero_electric_angle = 4.19; 
 
-  // Angle P controller
-     // motor.P_angle.P = 20;
-
-  // Maximal velocity of the position control
-     // motor.velocity_limit = 150;
-
   // Initialize motor
   motor.init();
   // Align sensor and start FOC
   motor.initFOC();
 
   // Add target command T
-  command.add('T', doTarget, "target velocity");
+  // command.add('T', doTarget, "target velocity");
 
   //Serial.println(F("Motor ready."));
   //Serial.println(F("Set the target angle using serial terminal:"));
@@ -178,17 +178,17 @@ void loop() {
 
   // check for loss of signal.
   if ((millis() - lastTime) > FAILSAFE_MS){
-    target_velocity = 0;
+    target_rps = 0;
   }
   
   // Disable motor when target_velocity == 0;
   if (enabled) {
-    if (target_velocity == 0) {
+    if (target_rps == 0) {
       motor.disable();
       enabled = false;
     }
   } else {
-    if (target_velocity != 0) {
+    if (target_rps != 0) {
       motor.enable();
       enabled = true;
     }
@@ -201,7 +201,7 @@ void loop() {
     previousMillis = currentMillis;
 
     Serial.print(enabled ? "ENA " : "DIS ");
-    Serial.print(target_velocity);
+    Serial.print(target_rps);
     Serial.print(" ");
     Serial.println(sensor.getVelocity());
   }
@@ -209,12 +209,12 @@ void loop() {
   // Main FOC algorithm function
   // The faster you run this function the better
   motor.loopFOC();
-  motor.move(target_velocity);
+  motor.move(target_rps);
  
   // Function intended to be used with serial plotter to monitor motor variables
   // significantly slowing the execution down!!!! Comment out if not needed.
   // motor.monitor();
 
   // User communication
-  command.run();
+  // command.run();
 }
